@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import pandas as pd
 from unidecode import unidecode
 
 COMMON_ABBREVIATIONS = (\
@@ -16,6 +17,7 @@ COMMON_ABBREVIATIONS = (\
         ("place", "pl"),\
         ("street", "st"),\
         ("road", "rd"),\
+        ("route", "rte"),\
         ("terrace", "ter"),\
         ("trail", "tr"),\
         ("east", "e"),\
@@ -33,6 +35,22 @@ def standardize_string(s):
     for word, abbr in COMMON_ABBREVIATIONS:
         cleaned = cleaned.replace(word, abbr)
     return cleaned
+
+def standardize_city(city):
+    city = standardize_string(city)
+    if city.endswith("(city)"):
+        return city[:-len("(city)")]
+    if city.endswith("(town)"):
+        return city[:-len("(town)")]
+    if city.endswith("(village)"):
+        return city[:-len("(village)")]
+    if city.startswith("townof"):
+        return city[len("townof"):]
+    if city.startswith("cityof"):
+        return city[len("cityof"):]
+    if city.startswith("villageof"):
+        return city[len("villageof"):]
+    return city
 
 def get_time_estimate_string(time_elapsed, num_complete, num_total):
     percent_complete = float(num_complete) / float(num_total) * 100
@@ -58,3 +76,6 @@ def get_time_estimate_string(time_elapsed, num_complete, num_total):
 
     return "Completed %d/%d (%.1f percent) in %s" % (num_complete, num_total, percent_complete, time_string)
 
+def num_rows_in_csv(csv_path):
+    df = pd.read_csv(csv_path)
+    return df.shape[0]
