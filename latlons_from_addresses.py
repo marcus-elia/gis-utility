@@ -69,6 +69,7 @@ def main():
     parser.add_argument("--date-column-name", required=True, help="Label of the sale date column in the CSV.")
     parser.add_argument("--school-column-name", required=True, help="Label of the school district column in the CSV.")
     parser.add_argument("--containing-towns-json", required=False, help="Path to json file mapping cities/villages to their containing towns.")
+    parser.add_argument("--max-price", required=False, help="Ignore outlier sales.")
 
     args = parser.parse_args()
 
@@ -145,6 +146,8 @@ def main():
         for row in csv_reader:
             if not fieldnames:
                 fieldnames = list(row.keys())
+            if args.max_price and int(row[args.price_column_name]) > int(args.max_price):
+                continue
             state = standardize_string(args.single_state) if args.single_state else standardize_string(row[args.state_column_name])
             city = standardize_city(row[args.city_column_name])
             try:
