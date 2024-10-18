@@ -1,0 +1,33 @@
+{
+"keys" :
+{
+	"county" : "COUNTY_NAME",
+	"city" : "CITYTOWN_NAME",
+	"address" : "PARCEL_ADDRESS",
+	"number" : "LOC_ST_NBR",
+	"street" : "LOC_STREET",
+	"zip" : "LOC_ZIP",
+	"property_type" : "PROP_CLASS",
+	"land_assessment" : "LAND_AV",
+	"total_assessment" : "TOTAL_AV",
+	"market_value" : "FULL_MARKET_VAL",
+	"year_built" : "YR_BLT",
+	"sqft" : "SQFT_LIVING",
+	"acres" : "CALC_ACRES",
+	"school_district" : "SCHOOL_NAME",
+	"sewer" : "SEWER_TYPE",
+	"sewer_description" : "SEWER_DESC",
+	"water" : "WATER_SUPPLY",
+	"water_description" : "WATER_DESC",
+	"building_style" : "BLDG_STYLE",
+	"building_style_description" : "BLDG_STYLE_DESC",
+	"bathrooms" : "NBR_FULL_BATHS",
+	"bedrooms" : "NBR_BEDROOMS"
+},
+"values" :
+{
+	"single_family_home" : "210",
+	"connected_water" : "3",
+	"connected_sewer" : "3"
+}
+}

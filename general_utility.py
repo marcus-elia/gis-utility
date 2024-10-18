@@ -52,6 +52,18 @@ def standardize_city(city):
         return city[len("villageof"):]
     return city
 
+def standardize_county(county):
+    county = standardize_string(county)
+    if county.endswith("county"):
+        return county[:-len("county")]
+    if county.startswith("countyof"):
+        return county[len("countyof"):]
+    return county
+
+def parse_latlon_string(latlon_string):
+    lat,lon = latlon_string.split(',')
+    return (float(lat.strip()), float(lon.strip()))
+
 def get_time_estimate_string(time_elapsed, num_complete, num_total):
     percent_complete = float(num_complete) / float(num_total) * 100
     time_remaining = int(time_elapsed * (100 - percent_complete) / percent_complete)
