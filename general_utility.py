@@ -60,6 +60,15 @@ def standardize_county(county):
         return county[len("countyof"):]
     return county
 
+def to_camel_case(name, capitalize):
+    words = name.split()
+    camel_name = ""
+    for word in words:
+        if capitalize and len(word) > 1:
+            word = word[0].upper() + word[1:].lower()
+        camel_name += word
+    return camel_name
+
 def parse_latlon_string(latlon_string):
     lat,lon = latlon_string.split(',')
     return (float(lat.strip()), float(lon.strip()))
