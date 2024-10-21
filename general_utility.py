@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import pandas as pd
 from unidecode import unidecode
 
@@ -72,6 +73,14 @@ def to_camel_case(name, capitalize):
 def parse_latlon_string(latlon_string):
     lat,lon = latlon_string.split(',')
     return (float(lat.strip()), float(lon.strip()))
+
+def list_files_recursive(path):
+    for entry in os.listdir(path):
+        full_path = os.path.join(path, entry)
+        if os.path.isdir(full_path):
+            yield from list_files_recursive(full_path)
+        else:
+            yield full_path
 
 def get_time_estimate_string(time_elapsed, num_complete, num_total):
     percent_complete = float(num_complete) / float(num_total) * 100
