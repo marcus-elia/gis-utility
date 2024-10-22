@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
+import geopandas
 import os
 import pandas as pd
+import shapely
 from unidecode import unidecode
 
 COMMON_ABBREVIATIONS = (\
@@ -109,3 +111,8 @@ def get_time_estimate_string(time_elapsed, num_complete, num_total):
 def num_rows_in_csv(csv_path):
     df = pd.read_csv(csv_path)
     return df.shape[0]
+
+def latlon_to_crs(lat, lon, epsg):
+    gdf = geopandas.GeoDataFrame({'geometry':[shapely.Point(lon, lat)]}, crs=4326)
+    gdf = gdf.to_crs(epsg)
+    return gdf.loc[0]['geometry'].x, gdf.loc[0]['geometry'].y
