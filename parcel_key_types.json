@@ -1,10 +1,9 @@
 {
 	"county" : "string",
 	"city" : "string",
-	"address" : "string",
-	"number" : "float",
+	"municipality" : "string",
 	"street" : "string",
-	"zip" : "string",
+	"zip_code" : "string",
 	"property_type" : "string",
 	"land_assessment" : "int",
 	"total_assessment" : "int",
@@ -13,12 +12,9 @@
 	"sqft" : "int",
 	"acres" : "float",
 	"school_district" : "string",
-	"sewer" : "string",
-	"sewer_description" : "string",
-	"water" : "string",
-	"water_description" : "string",
+	"sewer_type" : "string",
+	"water_type" : "string",
 	"building_style" : "string",
-	"building_style_description" : "string",
 	"bathrooms" : "float",
 	"bedrooms" : "float"
 }

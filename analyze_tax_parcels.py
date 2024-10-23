@@ -40,9 +40,13 @@ def main():
     parser.add_argument("--require-connected-water", action='store_true', help="If you want the house to have public water.")
     parser.add_argument("--require-connected-sewer", action='store_true', help="If you want the house to have public sewer.")
     parser.add_argument("--school-district", required=False, help="Desired school district.")
+    parser.add_argument("--city", required=False, help="Desired city.")
+    parser.add_argument("--municipality", required=False, help="Desired municipality.")
+    parser.add_argument("--zip-code", required=False, help="Desired zip code.")
     parser.add_argument("--min-beds", required=False, help="Minimum number of bedrooms you want a house to have.")
     parser.add_argument("--min-baths", required=False, help="Minimum number of bathrooms you want a house to have.")
     parser.add_argument("--output-filepath", required=False, help="Save filtered dataframe to filepath.")
+    parser.add_argument("--folium-filepath", required=False, help="Save interactive Folium map to HTML file.")
     parser.add_argument("--plot-all-filepath", required=False, help="Plot all points before filtering, save to image path.")
     parser.add_argument("--plot-key", required=False, help="The feature that colors the plot, if any. (%s)" % (attribute_keys_string))
     parser.add_argument("--plot-filtered-filepath", required=False, help="Plot the remaining points after filtering, save to image path.")
@@ -56,6 +60,8 @@ def main():
     parser.add_argument("--colormap", required=False, help="Colormap for the plots. Defaults 'plamsa' for quantitative, 'tab20' for qualitative. Also recommend 'viridis' and 'seismic' and 'bwr'.")
     parser.add_argument("--markersize", required=False, help="Markersize for the plots. Defaults to 15.")
     parser.add_argument("--figsize", required=False, help="Figure size for the plots. Defaults to 10.")
+    parser.add_argument("--tile-source", required=False, default='OpenStreetMap.Mapnik', help="Tile source for Folium. Defaults to 'OpenStreetMap.Mapnik'. Some others are 'Esri.WorldImagery', 'Esri.WorldStreetMap', 'CartoDB.Positron', 'CartoDB.Voyager', 'USGS.USImagery', 'TopPlusOpen.Grey', 'Stadia.AlidadeSmooth")
+    parser.add_argument("--max-folium-points", required=False, default=40000, help="Max number of points for interactive folium map. Defaults to 40k.")
 
     args = parser.parse_args()
 
@@ -82,7 +88,7 @@ def main():
     #                          Verify Args
     #
     # ==================================================================
-    if args.plot_key and (not args.plot_all_filepath and not args.plot_filtered_filepath):
+    if args.plot_key and (not args.plot_all_filepath and not args.plot_filtered_filepath and not args.folium_filepath):
         raise ValueError("plot-key is present but no plots are being saved.")
     if args.center_latlon and (not args.radius_meters and not args.width_meters):
         raise ValueError("Must specify a radius or a width when center is specified.")
@@ -92,10 +98,10 @@ def main():
         raise ValueError("Must specify a center lat/lon to restrict to a circle or rectangle.")
     if args.county_parent_dir and (not args.center_latlon or (not args.radius_meters and not args.width_meters)):
         raise ValueError("Must specify a center lat/lon and a radius or width when loading from the county parent directory.")
-    if args.colormap and (not args.plot_all_filepath and not args.plot_filtered_filepath):
+    if args.colormap and (not args.plot_all_filepath and not args.plot_filtered_filepath and not args.folium_filepath):
         raise ValueError("Colormap is present but no plots are being saved.")
 
-    plot_attribute_type = general_name_to_type[args.plot_key]
+    plot_attribute_type = general_name_to_type[args.plot_key] if args.plot_key else None
     if args.colormap:
         if not args.colormap in list(colormaps):
             raise ValueError("The specified colormap (%s) is not in the list of options: " % (args.colormap) + list(colormaps))
@@ -209,17 +215,6 @@ def main():
 
     # ==================================================================
     #
-    #                          Remove Outliers                  
-    #
-    # ==================================================================
-    if args.outlier_percentile and args.plot_key:
-        plot_key = general_name_to_specific_name["keys"][args.plot_key]
-        q_low = gdf[plot_key].quantile(float(args.outlier_percentile))
-        q_hi  = gdf[plot_key].quantile(1 - float(args.outlier_percentile))
-        gdf = gdf[(gdf[plot_key] < q_hi) & (gdf[plot_key] > q_low)]
-
-    # ==================================================================
-    #
     #                    Plot all of the data
     #
     # ==================================================================
@@ -247,14 +242,17 @@ def main():
     min_baths = float(args.min_baths) if args.min_baths else 0
 
     property_type_key = general_name_to_specific_name["keys"]["property_type"]
+    city_key = general_name_to_specific_name["keys"]["city"]
+    municipality_key = general_name_to_specific_name["keys"]["municipality"]
+    zip_code_key = general_name_to_specific_name["keys"]["zip_code"]
     year_built_key = general_name_to_specific_name["keys"]["year_built"]
     sqft_key = general_name_to_specific_name["keys"]["sqft"]
     acres_key = general_name_to_specific_name["keys"]["acres"]
     beds_key = general_name_to_specific_name["keys"]["bedrooms"]
     baths_key = general_name_to_specific_name["keys"]["bathrooms"]
     school_district_key = general_name_to_specific_name["keys"]["school_district"]
-    water_key = general_name_to_specific_name["keys"]["water"]
-    sewer_key = general_name_to_specific_name["keys"]["sewer"]
+    water_key = general_name_to_specific_name["keys"]["water_type"]
+    sewer_key = general_name_to_specific_name["keys"]["sewer_type"]
     single_family_home_value = general_name_to_specific_name["values"]["single_family_home"]
     connected_water_value = general_name_to_specific_name["values"]["connected_water"]
     connected_sewer_value = general_name_to_specific_name["values"]["connected_sewer"]
@@ -296,6 +294,18 @@ def main():
         gdf = gdf[(gdf[sewer_key] == connected_sewer_value)]
         print("Filtered by sewer type down to %d houses." % (len(gdf)))
 
+    if args.city:
+        gdf = gdf[gdf[city_key] == args.city]
+        print("Filtered by city down to %d houses." % (len(gdf)))
+
+    if args.municipality:
+        gdf = gdf[gdf[municipality_key] == args.municipality]
+        print("Filtered by municipality down to %d houses." % (len(gdf)))
+
+    if args.zip_code:
+        gdf = gdf[gdf[zip_code_key] == args.zip_code]
+        print("Filtered by zip code down to %d houses." % (len(gdf)))
+
     if args.school_district:
         gdf = gdf[gdf[school_district_key] == args.school_district]
         print("Filtered by school district down to %d houses." % (len(gdf)))
@@ -327,6 +337,36 @@ def main():
             ax = gdf.plot(figsize=(fs, fs), legend=True, markersize=ms, cmap=colormap)
         cx.add_basemap(ax, source=cx.providers.Esri.WorldStreetMap)
         ax.figure.savefig(args.plot_filtered_filepath)
+
+    # ==================================================================
+    #
+    #           Remove undesired keys and rename keys
+    #
+    # ==================================================================
+    gdf = gdf.rename(columns={value: key for key, value in general_name_to_specific_name['keys'].items()})
+    desired_keys = list(general_name_to_specific_name['keys'].keys()) + ['geometry']
+    gdf = gdf[desired_keys]
+    gdf = gdf.round(2)
+
+    # ==================================================================
+    #
+    #              Save an interactive map to HTML
+    #
+    # ==================================================================
+    if len(gdf) > args.max_folium_points:
+        print("Warning! Too many points. Randomly dropping %d parcels." % (len(gdf) - args.max_folium_points))
+        gdf = gdf.sample(frac=args.max_folium_points / len(gdf))
+    if args.folium_filepath:
+        if args.plot_key:
+            ignore_outliers = args.outlier_percentile != None and plot_attribute_type == AttributeType.Quantitative
+            q_low = gdf[args.plot_key].quantile(float(args.outlier_percentile)) if ignore_outliers  else None
+            q_hi  = gdf[args.plot_key].quantile(1 - float(args.outlier_percentile)) if ignore_outliers else None
+            column = args.plot_key
+            m = gdf.explore(column, legend=True, cmap=colormap, markersize=ms, tiles=args.tile_source, vmin=q_low, vmax=q_hi)
+        else:
+            m = gdf.explore(markersize=ms, tiles=args.tile_source)
+        m.save(args.folium_filepath)
+        print("Saved folium map to %s." % (args.folium_filepath))
 
 if __name__ == "__main__":
     main()
