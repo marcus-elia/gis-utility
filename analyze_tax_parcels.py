@@ -13,10 +13,12 @@ import geopandas
 import json
 from matplotlib import colormaps
 import shapely
+import time
 
 from general_utility import parse_latlon_string, standardize_county, latlon_to_crs
 from tax_parcel_loader import TaxParcelLoader
 
+MAX_LOADING_WIDTH_METERS = 60000
 
 class AttributeType(Enum):
     Quantitative = 1
@@ -31,39 +33,40 @@ def main():
     parser.add_argument("-k", "--parcel-keys-and-values-filepath", required=True, help="Path to JSON file mapping generic key/value names to file-specific names.")
     parser.add_argument("-t", "--parcel-keys-types-filepath", required=True, help="Path to JSON file mapping generic key/value names to types.")
     parser.add_argument("--already-sfh", action='store_true', help="If the dataset only contains single-family-homes, no need to filter.")
-    parser.add_argument("--min-year-built", required=False, help="Oldest year you want a house to be built in.")
-    parser.add_argument("--max-year-built", required=False, help="Newest year you want a house to be built in.")
-    parser.add_argument("--min-sqft", required=False, help="Minimum square footage you want a house to have.")
-    parser.add_argument("--max-sqft", required=False, help="Maximum square footage you want a house to have.")
-    parser.add_argument("--min-acres", required=False, help="Minimum number of acres you want a house to have.")
-    parser.add_argument("--max-acres", required=False, help="Maximum number of acres you want a house to have.")
+    parser.add_argument("--min-year-built", required=False, type=int, help="Oldest year you want a house to be built in.")
+    parser.add_argument("--max-year-built", required=False, type=int, help="Newest year you want a house to be built in.")
+    parser.add_argument("--min-sqft", required=False, type=int, help="Minimum square footage you want a house to have.")
+    parser.add_argument("--max-sqft", required=False, type=int, help="Maximum square footage you want a house to have.")
+    parser.add_argument("--min-acres", required=False, type=float, help="Minimum number of acres you want a house to have.")
+    parser.add_argument("--max-acres", required=False, type=float, help="Maximum number of acres you want a house to have.")
     parser.add_argument("--require-connected-water", action='store_true', help="If you want the house to have public water.")
     parser.add_argument("--require-connected-sewer", action='store_true', help="If you want the house to have public sewer.")
     parser.add_argument("--school-district", required=False, help="Desired school district.")
     parser.add_argument("--city", required=False, help="Desired city.")
     parser.add_argument("--municipality", required=False, help="Desired municipality.")
     parser.add_argument("--zip-code", required=False, help="Desired zip code.")
-    parser.add_argument("--min-beds", required=False, help="Minimum number of bedrooms you want a house to have.")
-    parser.add_argument("--min-baths", required=False, help="Minimum number of bathrooms you want a house to have.")
+    parser.add_argument("--min-beds", required=False, type=int, help="Minimum number of bedrooms you want a house to have.")
+    parser.add_argument("--min-baths", required=False, type=float, help="Minimum number of bathrooms you want a house to have.")
     parser.add_argument("--output-filepath", required=False, help="Save filtered dataframe to filepath.")
     parser.add_argument("--folium-filepath", required=False, help="Save interactive Folium map to HTML file.")
     parser.add_argument("--plot-all-filepath", required=False, help="Plot all points before filtering, save to image path.")
     parser.add_argument("--plot-key", required=False, help="The feature that colors the plot, if any. (%s)" % (attribute_keys_string))
     parser.add_argument("--plot-filtered-filepath", required=False, help="Plot the remaining points after filtering, save to image path.")
     parser.add_argument("--convert-to-centroid", action='store_true', help="If the geometry is polygons, replace with each parcel's centroid.")
-    parser.add_argument("--outlier-percentile", required=False, help="Remove outliers for the column used as the plot coloring variable.")
+    parser.add_argument("--outlier-percentile", required=False, type=float, help="Remove outliers for the column used as the plot coloring variable. E.g. 0.05 removes <5th percentile and >95th percentile.")
     parser.add_argument("--center-latlon", required=False, help="The lat,lon center of the desired region.")
-    parser.add_argument("--radius-meters", required=False, help="The radius, if the desired region is circular.")
-    parser.add_argument("--width-meters", required=False, help="The width, if the desired region is rectangular.")
-    parser.add_argument("--height-meters", required=False, help="The height, if the desired region is rectangular.")
+    parser.add_argument("--radius-meters", required=False, type=float, help="The radius, if the desired region is circular.")
+    parser.add_argument("--width-meters", required=False, type=float, help="The width, if the desired region is rectangular.")
+    parser.add_argument("--height-meters", required=False, type=float, help="The height, if the desired region is rectangular.")
     parser.add_argument("--county-name", required=False, help="Restrict results to a particular county.")
     parser.add_argument("--colormap", required=False, help="Colormap for the plots. Defaults 'plamsa' for quantitative, 'tab20' for qualitative. Also recommend 'viridis' and 'seismic' and 'bwr'.")
-    parser.add_argument("--markersize", required=False, help="Markersize for the plots. Defaults to 15.")
-    parser.add_argument("--figsize", required=False, help="Figure size for the plots. Defaults to 10.")
+    parser.add_argument("--markersize", required=False, type=int, help="Markersize for the plots. Defaults to 15.")
+    parser.add_argument("--figsize", required=False, type=int, help="Figure size for the plots. Defaults to 10.")
     parser.add_argument("--tile-source", required=False, default='OpenStreetMap.Mapnik', help="Tile source for Folium. Defaults to 'OpenStreetMap.Mapnik'. Some others are 'Esri.WorldImagery', 'Esri.WorldStreetMap', 'CartoDB.Positron', 'CartoDB.Voyager', 'USGS.USImagery', 'TopPlusOpen.Grey', 'Stadia.AlidadeSmooth")
     parser.add_argument("--max-folium-points", required=False, default=40000, help="Max number of points for interactive folium map. Defaults to 40k.")
 
     args = parser.parse_args()
+    start_time = time.time()
 
     # ==================================================================
     #
@@ -100,6 +103,12 @@ def main():
         raise ValueError("Must specify a center lat/lon and a radius or width when loading from the county parent directory.")
     if args.colormap and (not args.plot_all_filepath and not args.plot_filtered_filepath and not args.folium_filepath):
         raise ValueError("Colormap is present but no plots are being saved.")
+    if args.radius_meters and 2*args.radius_meters > MAX_LOADING_WIDTH_METERS:
+        raise ValueError("Requested radius (%d meters) is greater than max allowed radius (%d meters)." % (args.radius_meters, MAX_LOADING_WIDTH_METERS/2))
+    if args.width_meters and args.width_meters > MAX_LOADING_WIDTH_METERS:
+        raise ValueError("Requested width (%d meters) is greater than max allowed width (%d meters)." % (args.width_meters, MAX_LOADING_WIDTH_METERS))
+    if args.height_meters and args.height_meters > MAX_LOADING_WIDTH_METERS:
+        raise ValueError("Requested height (%d meters) is greater than max allowed height (%d meters)." % (args.height_meters, MAX_LOADING_HEIGHT_METERS))
 
     plot_attribute_type = general_name_to_type[args.plot_key] if args.plot_key else None
     if args.colormap:
@@ -114,18 +123,18 @@ def main():
             colormap = 'tab20'
 
     if args.markersize:
-        if int(args.markersize) <= 0:
-            raise ValueError("Markersize must be positive, not %d." % (int(args.markersize)))
+        if args.markersize <= 0:
+            raise ValueError("Markersize must be positive, not %d." % (args.markersize))
         else:
-            ms = int(args.markersize)
+            ms = args.markersize
     else:
         ms = 15
 
     if args.figsize:
-        if int(args.figsize) <= 0:
-            raise ValueError("Figure size must be positive, not %d." % (int(args.figsize)))
+        if args.figsize <= 0:
+            raise ValueError("Figure size must be positive, not %d." % (args.figsize))
         else:
-            fs = int(args.figsize)
+            fs = args.figsize
     else:
         fs = 10
 
@@ -145,13 +154,13 @@ def main():
     # ==================================================================
     if args.center_latlon:
         if args.radius_meters:
-            width = 2 * float(args.radius_meters)
+            width = 2 * args.radius_meters
             height = width
         elif args.height_meters:
-            width = float(args.width_meters)
-            height = float(args.height_meters)
+            width = args.width_meters
+            height = args.height_meters
         else:
-            width = float(args.width_meters)
+            width = args.width_meters
             height = width
 
     if args.input_filepath:
@@ -197,9 +206,9 @@ def main():
     # ==================================================================
     if args.radius_meters:
         gdf['distance_to_center'] = gdf['geometry'].centroid.distance(shapely.Point((center_x, center_y)))
-        gdf = gdf[gdf['distance_to_center'] <= float(args.radius_meters)]
+        gdf = gdf[gdf['distance_to_center'] <= args.radius_meters]
         gdf.drop('distance_to_center', axis='columns', inplace=True)
-        print("Only %d parcels lie within the %.2f meter radius." % (len(gdf), float(args.radius_meters)))
+        print("Only %d parcels lie within the %.2f meter radius." % (len(gdf), args.radius_meters))
 
     # ==================================================================
     #
@@ -232,14 +241,14 @@ def main():
     #               Set the variables for filtering
     #
     # ==================================================================
-    min_year = int(args.min_year_built) if args.min_year_built else 0
-    max_year = int(args.max_year_built) if args.max_year_built else 9999
-    min_sqft = float(args.min_sqft) if args.min_sqft else 0
-    max_sqft = float(args.max_sqft) if args.max_sqft else 99999
-    min_acres = float(args.min_acres) if args.min_acres else 0
-    max_acres = float(args.max_acres) if args.max_acres else 99999
-    min_beds = int(args.min_beds) if args.min_beds else 0
-    min_baths = float(args.min_baths) if args.min_baths else 0
+    min_year = args.min_year_built if args.min_year_built else 0
+    max_year = args.max_year_built if args.max_year_built else 9999
+    min_sqft = args.min_sqft if args.min_sqft else 0
+    max_sqft = args.max_sqft if args.max_sqft else 99999
+    min_acres = args.min_acres if args.min_acres else 0
+    max_acres = args.max_acres if args.max_acres else 99999
+    min_beds = args.min_beds if args.min_beds else 0
+    min_baths = args.min_baths if args.min_baths else 0
 
     property_type_key = general_name_to_specific_name["keys"]["property_type"]
     city_key = general_name_to_specific_name["keys"]["city"]
@@ -359,14 +368,15 @@ def main():
     if args.folium_filepath:
         if args.plot_key:
             ignore_outliers = args.outlier_percentile != None and plot_attribute_type == AttributeType.Quantitative
-            q_low = gdf[args.plot_key].quantile(float(args.outlier_percentile)) if ignore_outliers  else None
-            q_hi  = gdf[args.plot_key].quantile(1 - float(args.outlier_percentile)) if ignore_outliers else None
+            q_low = gdf[args.plot_key].quantile(args.outlier_percentile) if ignore_outliers  else None
+            q_hi  = gdf[args.plot_key].quantile(1 - args.outlier_percentile) if ignore_outliers else None
             column = args.plot_key
             m = gdf.explore(column, legend=True, cmap=colormap, markersize=ms, tiles=args.tile_source, vmin=q_low, vmax=q_hi)
         else:
             m = gdf.explore(markersize=ms, tiles=args.tile_source)
         m.save(args.folium_filepath)
         print("Saved folium map to %s." % (args.folium_filepath))
+    print("Total time: %.2f" % (time.time() - start_time))
 
 if __name__ == "__main__":
     main()
