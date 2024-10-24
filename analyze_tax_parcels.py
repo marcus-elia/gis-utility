@@ -16,7 +16,7 @@ import shapely
 import time
 
 from general_utility import parse_latlon_string, standardize_county, latlon_to_crs
-from tax_parcel_loader import TaxParcelLoader
+from tax_parcel_loader import TaxParcelLoader, AttributeFilter
 
 MAX_LOADING_WIDTH_METERS = 60000
 
@@ -29,8 +29,8 @@ def main():
     parser = argparse.ArgumentParser(description="Print stats about tax parcel nodes.")
     parcel_source_group = parser.add_mutually_exclusive_group(required=True)
     parcel_source_group.add_argument("-i", "--input-filepath", help="Path to input GIS file of tax parcels if loading from single file.")
-    parcel_source_group.add_argument("-d", "--county-parent-dir", help="Path to directory containing a subdir for each county.")
-    parser.add_argument("-k", "--parcel-keys-and-values-filepath", required=True, help="Path to JSON file mapping generic key/value names to file-specific names.")
+    parcel_source_group.add_argument("-d", "--state-dir", help="Path to directory containing a subdir for each county.")
+    parser.add_argument("-k", "--parcel-keys-and-values-filename", required=True, help="Name only of JSON file mapping generic key/value names to file-specific names. This filename can appear both in the state dir and the individual county dirs.")
     parser.add_argument("-t", "--parcel-keys-types-filepath", required=True, help="Path to JSON file mapping generic key/value names to types.")
     parser.add_argument("--already-sfh", action='store_true', help="If the dataset only contains single-family-homes, no need to filter.")
     parser.add_argument("--min-year-built", required=False, type=int, help="Oldest year you want a house to be built in.")
@@ -49,7 +49,6 @@ def main():
     parser.add_argument("--min-baths", required=False, type=float, help="Minimum number of bathrooms you want a house to have.")
     parser.add_argument("--output-filepath", required=False, help="Save filtered dataframe to filepath.")
     parser.add_argument("--folium-filepath", required=False, help="Save interactive Folium map to HTML file.")
-    parser.add_argument("--plot-all-filepath", required=False, help="Plot all points before filtering, save to image path.")
     parser.add_argument("--plot-key", required=False, help="The feature that colors the plot, if any. (%s)" % (attribute_keys_string))
     parser.add_argument("--plot-filtered-filepath", required=False, help="Plot the remaining points after filtering, save to image path.")
     parser.add_argument("--convert-to-centroid", action='store_true', help="If the geometry is polygons, replace with each parcel's centroid.")
@@ -58,7 +57,7 @@ def main():
     parser.add_argument("--radius-meters", required=False, type=float, help="The radius, if the desired region is circular.")
     parser.add_argument("--width-meters", required=False, type=float, help="The width, if the desired region is rectangular.")
     parser.add_argument("--height-meters", required=False, type=float, help="The height, if the desired region is rectangular.")
-    parser.add_argument("--county-name", required=False, help="Restrict results to a particular county.")
+    parser.add_argument("--county", required=False, help="Restrict results to a particular county.")
     parser.add_argument("--colormap", required=False, help="Colormap for the plots. Defaults 'plamsa' for quantitative, 'tab20' for qualitative. Also recommend 'viridis' and 'seismic' and 'bwr'.")
     parser.add_argument("--markersize", required=False, type=int, help="Markersize for the plots. Defaults to 15.")
     parser.add_argument("--figsize", required=False, type=int, help="Figure size for the plots. Defaults to 10.")
@@ -73,10 +72,6 @@ def main():
     #                    Load JSON Data About Keys
     #
     # ==================================================================
-    f = open(args.parcel_keys_and_values_filepath, 'r')
-    general_name_to_specific_name = json.loads(f.read())
-    f.close()
-
     f = open(args.parcel_keys_types_filepath, 'r')
     general_name_to_type = json.loads(f.read())
     f.close()
@@ -91,7 +86,7 @@ def main():
     #                          Verify Args
     #
     # ==================================================================
-    if args.plot_key and (not args.plot_all_filepath and not args.plot_filtered_filepath and not args.folium_filepath):
+    if args.plot_key and (not args.plot_filtered_filepath and not args.folium_filepath):
         raise ValueError("plot-key is present but no plots are being saved.")
     if args.center_latlon and (not args.radius_meters and not args.width_meters):
         raise ValueError("Must specify a radius or a width when center is specified.")
@@ -99,9 +94,9 @@ def main():
         raise ValueError("Cannot specify both a circular and a rectangular region.")
     if not args.center_latlon and (args.radius_meters or args.width_meters or args.height_meters):
         raise ValueError("Must specify a center lat/lon to restrict to a circle or rectangle.")
-    if args.county_parent_dir and (not args.center_latlon or (not args.radius_meters and not args.width_meters)):
+    if args.state_dir and (not args.center_latlon or (not args.radius_meters and not args.width_meters)):
         raise ValueError("Must specify a center lat/lon and a radius or width when loading from the county parent directory.")
-    if args.colormap and (not args.plot_all_filepath and not args.plot_filtered_filepath and not args.folium_filepath):
+    if args.colormap and (not args.plot_filtered_filepath and not args.folium_filepath):
         raise ValueError("Colormap is present but no plots are being saved.")
     if args.radius_meters and 2*args.radius_meters > MAX_LOADING_WIDTH_METERS:
         raise ValueError("Requested radius (%d meters) is greater than max allowed radius (%d meters)." % (args.radius_meters, MAX_LOADING_WIDTH_METERS/2))
@@ -175,21 +170,13 @@ def main():
             # For a single file, it is allowed to load the entire file with no bbox.
             gdf = geopandas.read_file(args.input_filepath)
     else:
-        print("Loading parcels from county files contained in %s." % (args.county_parent_dir))
-        loader = TaxParcelLoader(args.county_parent_dir)
+        print("Loading parcels from county files contained in %s." % (args.state_dir))
+        attribute_filter = AttributeFilter(args.already_sfh, args.require_connected_water, args.require_connected_sewer, args.min_year_built, args.max_year_built, args.min_sqft, args.max_sqft, args.min_acres, args.max_acres, args.min_beds, args.min_baths, args.county, args.school_district, args.city, args.municipality, args.zip_code)
+        loader = TaxParcelLoader(args.state_dir, args.parcel_keys_and_values_filename)
         lat, lon = parse_latlon_string(args.center_latlon)
-        gdf = loader.load_parcels((lat, lon), width, height)
+        gdf = loader.load_parcels((lat, lon), width, height, attribute_filter)
     num_parcels = len(gdf)
     print("There are %d total parcels within the bounding box." % (num_parcels))
-
-    # ==================================================================
-    #
-    #               Convert CRS from degrees to meters
-    #
-    # ==================================================================
-    
-    # Convert to this projection. Needed for the contextily basemaps and enforcing a radius.
-    gdf = gdf.to_crs(epsg=3857)
 
     # ==================================================================
     #
@@ -212,120 +199,6 @@ def main():
 
     # ==================================================================
     #
-    #               Restrict the data to a county
-    #
-    # ==================================================================
-    if args.county_name:
-        county_name_key = general_name_to_specific_name["keys"]["county"]
-        def filter_by_row_value(row, column_name, filter_value):
-            return standardize_county(row[column_name]) == filter_value
-        gdf = gdf[gdf.apply(filter_by_row_value, axis=1, column_name=county_name_key, filter_value=standardize_county(args.county_name))]
-        print("Only %d parcels lie within the the county named %s." % (len(gdf), args.county_name))
-
-    # ==================================================================
-    #
-    #                    Plot all of the data
-    #
-    # ==================================================================
-    if args.plot_all_filepath:
-        if args.plot_key:
-            column = general_name_to_specific_name["keys"][args.plot_key]
-            ax = gdf.plot(column, figsize=(fs, fs), legend=True, markersize=ms, cmap=colormap)
-        else:
-            ax = gdf.plot(figsize=(fs, fs), legend=True, markersize=ms, cmap=colormap)
-        cx.add_basemap(ax, source=cx.providers.Esri.WorldStreetMap)
-        ax.figure.savefig(args.plot_all_filepath)
-
-    # ==================================================================
-    #
-    #               Set the variables for filtering
-    #
-    # ==================================================================
-    min_year = args.min_year_built if args.min_year_built else 0
-    max_year = args.max_year_built if args.max_year_built else 9999
-    min_sqft = args.min_sqft if args.min_sqft else 0
-    max_sqft = args.max_sqft if args.max_sqft else 99999
-    min_acres = args.min_acres if args.min_acres else 0
-    max_acres = args.max_acres if args.max_acres else 99999
-    min_beds = args.min_beds if args.min_beds else 0
-    min_baths = args.min_baths if args.min_baths else 0
-
-    property_type_key = general_name_to_specific_name["keys"]["property_type"]
-    city_key = general_name_to_specific_name["keys"]["city"]
-    municipality_key = general_name_to_specific_name["keys"]["municipality"]
-    zip_code_key = general_name_to_specific_name["keys"]["zip_code"]
-    year_built_key = general_name_to_specific_name["keys"]["year_built"]
-    sqft_key = general_name_to_specific_name["keys"]["sqft"]
-    acres_key = general_name_to_specific_name["keys"]["acres"]
-    beds_key = general_name_to_specific_name["keys"]["bedrooms"]
-    baths_key = general_name_to_specific_name["keys"]["bathrooms"]
-    school_district_key = general_name_to_specific_name["keys"]["school_district"]
-    water_key = general_name_to_specific_name["keys"]["water_type"]
-    sewer_key = general_name_to_specific_name["keys"]["sewer_type"]
-    single_family_home_value = general_name_to_specific_name["values"]["single_family_home"]
-    connected_water_value = general_name_to_specific_name["values"]["connected_water"]
-    connected_sewer_value = general_name_to_specific_name["values"]["connected_sewer"]
-
-    # ==================================================================
-    #
-    #               Filter to only get the desired houses
-    #
-    # ==================================================================
-    if not args.already_sfh:
-        gdf = gdf[gdf[property_type_key] == single_family_home_value]
-        print("Filtered down to %d single-family-homes." % (len(gdf)))
-
-    if args.min_year_built or args.max_year_built:
-        gdf = gdf[(gdf[year_built_key] >= min_year) & (gdf[year_built_key] <= max_year)]
-        print("Filtered by year down to %d houses." % (len(gdf)))
-
-    if args.min_sqft or args.max_sqft:
-        gdf = gdf[(gdf[sqft_key] >= min_sqft) & (gdf[sqft_key] <= max_sqft)]
-        print("Filtered by square footage down to %d houses." % (len(gdf)))
-
-    if args.min_acres or args.max_acres:
-        gdf = gdf[(gdf[acres_key] >= min_acres) & (gdf[acres_key] <= max_acres)]
-        print("Filtered by square footage down to %d houses." % (len(gdf)))
-
-    if args.min_beds:
-        gdf = gdf[(gdf[beds_key] >= min_beds)]
-        print("Filtered by number of bedrooms down to %d houses." % (len(gdf)))
-
-    if args.min_baths:
-        gdf = gdf[(gdf[baths_key] >= min_baths)]
-        print("Filtered by number of bathrooms down to %d houses." % (len(gdf)))
-
-    if args.require_connected_water:
-        gdf = gdf[(gdf[water_key] == connected_water_value)]
-        print("Filtered by water type down to %d houses." % (len(gdf)))
-
-    if args.require_connected_sewer:
-        gdf = gdf[(gdf[sewer_key] == connected_sewer_value)]
-        print("Filtered by sewer type down to %d houses." % (len(gdf)))
-
-    if args.city:
-        gdf = gdf[gdf[city_key] == args.city]
-        print("Filtered by city down to %d houses." % (len(gdf)))
-
-    if args.municipality:
-        gdf = gdf[gdf[municipality_key] == args.municipality]
-        print("Filtered by municipality down to %d houses." % (len(gdf)))
-
-    if args.zip_code:
-        gdf = gdf[gdf[zip_code_key] == args.zip_code]
-        print("Filtered by zip code down to %d houses." % (len(gdf)))
-
-    if args.school_district:
-        gdf = gdf[gdf[school_district_key] == args.school_district]
-        print("Filtered by school district down to %d houses." % (len(gdf)))
-    else:
-        districts = gdf[school_district_key].unique()
-        print("Houses per school district:")
-        for district in districts:
-            print("%s: %d" % (district, len(gdf[gdf[school_district_key] == district])))
-    
-    # ==================================================================
-    #
     #              Save the filtered dataframe to a GIS file
     #
     # ==================================================================
@@ -340,22 +213,14 @@ def main():
     # ==================================================================
     if args.plot_filtered_filepath:
         if args.plot_key:
-            column = general_name_to_specific_name["keys"][args.plot_key]
-            ax = gdf.plot(column, figsize=(fs, fs), legend=True, markersize=ms, cmap=colormap)
+            if gdf[args.plot_key].isnull().values.all(axis=0):
+                raise ValueError("Cannot make plot with %s as the key because that column is all null." % (args.plot_key))
+            ax = gdf.plot(args.plot_key, figsize=(fs, fs), legend=True, markersize=ms, cmap=colormap)
         else:
             ax = gdf.plot(figsize=(fs, fs), legend=True, markersize=ms, cmap=colormap)
         cx.add_basemap(ax, source=cx.providers.Esri.WorldStreetMap)
         ax.figure.savefig(args.plot_filtered_filepath)
-
-    # ==================================================================
-    #
-    #           Remove undesired keys and rename keys
-    #
-    # ==================================================================
-    gdf = gdf.rename(columns={value: key for key, value in general_name_to_specific_name['keys'].items()})
-    desired_keys = list(general_name_to_specific_name['keys'].keys()) + ['geometry']
-    gdf = gdf[desired_keys]
-    gdf = gdf.round(2)
+        print("Saved filtered plot to %s." % (args.plot_filtered_filepath))
 
     # ==================================================================
     #
@@ -370,8 +235,9 @@ def main():
             ignore_outliers = args.outlier_percentile != None and plot_attribute_type == AttributeType.Quantitative
             q_low = gdf[args.plot_key].quantile(args.outlier_percentile) if ignore_outliers  else None
             q_hi  = gdf[args.plot_key].quantile(1 - args.outlier_percentile) if ignore_outliers else None
-            column = args.plot_key
-            m = gdf.explore(column, legend=True, cmap=colormap, markersize=ms, tiles=args.tile_source, vmin=q_low, vmax=q_hi)
+            if gdf[args.plot_key].isnull().values.all(axis=0):
+                raise ValueError("Cannot make folium map with %s as the key because that column is all null." % (args.plot_key))
+            m = gdf.explore(args.plot_key, legend=True, cmap=colormap, markersize=ms, tiles=args.tile_source, vmin=q_low, vmax=q_hi)
         else:
             m = gdf.explore(markersize=ms, tiles=args.tile_source)
         m.save(args.folium_filepath)
