@@ -21,7 +21,7 @@ def count_files(parent_dir, filename_suffix):
     count = 0
     for full_path in list_files_recursive(parent_dir):
         filename = ntpath.basename(full_path)
-        if filename.split('.')[0].endswith(filename_suffix):
+        if not filename_suffix or filename.split('.')[0].endswith(filename_suffix):
             count += 1
     return count
 
@@ -42,7 +42,10 @@ def create_bbox_file(full_path, filename_suffix):
             (min_x, max_y),\
             (min_x, min_y)))
     feature = geojson.Feature(geometry=shapely_polygon_to_geojson(bbox_polygon), properties=geojson_contents['features'][0].properties)
-    output_filepath = full_path.replace(filename_suffix + ".", filename_suffix + "Bbox" + ".")
+    if filename_suffix:
+        output_filepath = full_path.replace(filename_suffix + ".", filename_suffix + "Bbox" + ".")
+    else:
+        output_filepath = full_path.replace(".", "Bbox" + ".")
     dump = geojson.dumps(geojson.FeatureCollection(features=[feature]))
     f = open(output_filepath, 'w')
     f.write(dump)
@@ -80,7 +83,7 @@ def restrict_to_attribute(geojson_path, key, required_value):
 def main():
     parser = argparse.ArgumentParser(description="Apply operations to geojson files.")
     parser.add_argument("-d", "--parent-dir", required=True, help="Path to parent directory.")
-    parser.add_argument("-s", "--filename-suffix", required=True, help="The target suffix for geojson files. E.g. 'County' -> 'YatesCounty.geojson'.")
+    parser.add_argument("-s", "--filename-suffix", required=False, help="The target suffix for geojson files. E.g. 'County' -> 'YatesCounty.geojson'.")
     operation_group = parser.add_mutually_exclusive_group(required=True)
     operation_group.add_argument("--add-bbox-file", action='store_true', help='Create an adjacent file containing the bbox of the polygon.')
     operation_group.add_argument("--reproject-to-epsg", help='Reproject geojson to the specified EPSG code.')
@@ -95,7 +98,7 @@ def main():
     num_completed = 0
     for full_path in list_files_recursive(args.parent_dir):
         filename = ntpath.basename(full_path)
-        if filename.split('.')[0].endswith(args.filename_suffix):
+        if filename.endswith("geojson") and (not args.filename_suffix or filename.split('.')[0].endswith(args.filename_suffix)):
             if args.add_bbox_file:
                 create_bbox_file(full_path, args.filename_suffix)
             elif args.reproject_to_epsg:
