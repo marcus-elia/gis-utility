@@ -115,9 +115,10 @@ def main():
         if args.min_x or args.min_y or args.max_x or args.max_y:
             raise ValueError("Cannot both specify extents and ask to detect extents.")
         query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time, args.grid_size if args.grid_size else 0.001)
-    elif not (args.min_x and args.min_y and args.max_x and args.max_y):
-        raise ValueError("Must specify all of min_x, min_y, max_x, max_y.")
-    query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time, args.grid_size if args.grid_size else 0.001, args.min_x, args.min_y, args.max_x, args.max_y)
+    else:
+        if not (args.min_x and args.min_y and args.max_x and args.max_y):
+            raise ValueError("Must specify all of min_x, min_y, max_x, max_y.")
+        query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time, args.grid_size if args.grid_size else 0.001, args.min_x, args.min_y, args.max_x, args.max_y)
 
 if __name__ == "__main__":
     main()
