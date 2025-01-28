@@ -3,8 +3,9 @@ import requests
 import json
 import time
 
+from general_utility import get_time_estimate_string
+
 # Configurable variables
-OUTPUT_FILE = "output.geojson"
 FIELDS = "*"  # Fields to retrieve, '*' for all fields
 FORMAT = "geojson"  # Response format
 
@@ -25,11 +26,30 @@ def save_geojson(data, file_name):
         json.dump(data, f)
 
 # Main function to query the server
-def query_all_data(base_url, output_geojson_filepath, minX, minY, maxX, maxY, wait_time, grid_size):
+def query_all_data(base_url, layer_number, output_geojson_filepath, wait_time, grid_size, minX=None, minY=None, maxX=None, maxY=None):
     features = []
 
-    num_total = ((maxX - minX) // grid_size) * ((maxY - minY) // grid_size)
+    # Get the max number of results that can be returned, so we can check if we ever hit it.
+    # Also get the extents so the user doesn't have to specify them
+    info_url = base_url + "?f=json"
+    info_response = requests.get(info_url)
+    info_data = info_response.json()
+    max_record_count = info_data.get("maxRecordCount", "Not specified")
+    if minX == None:
+        full_extents = info_data.get("fullExtent", {})
+        if len(full_extents) == 0:
+            raise ValueError("The server does not have 'fullExtent'.")
+        minX = full_extents['xmin']
+        minY = full_extents['ymin']
+        maxX = full_extents['xmax']
+        maxY = full_extents['ymax']
+
+    url = base_url + '/' + str(layer_number) + '/query'
+
+    num_total = ((maxX - minX) // grid_size + 1) * ((maxY - minY) // grid_size + 1)
     num_complete = 0
+    start_time = time.time()
+    num_limited_by_max_record_count = 0
     # Iterate over the bounding box in a grid pattern
     x = minX
     while x < maxX:
@@ -41,22 +61,32 @@ def query_all_data(base_url, output_geojson_filepath, minX, minY, maxX, maxY, wa
             
             # Build and execute the query
             query = build_query(x, y, x_max, y_max)
-            response = requests.get(base_url, params=query)
+            response = requests.get(url, params=query)
             
             if response.status_code == 200:
                 data = response.json()
                 if "features" in data:
+                    if len(data["features"]) == max_record_count:
+                        print("Reached maximum of %d features returned by a single query at %f, %f, %f, %f." % (max_record_count, x, y, x_max, y_max))
+                        num_limited_by_max_record_count += 1
                     features.extend(data["features"])
                     print(f"Retrieved {len(data['features'])} features from ({x}, {y}) to ({x_max}, {y_max})")
             else:
-                print(f"Error: {response.status_code} for query at ({x}, {y})")
+                if response.headers.get("Content-Type") == "application/json":
+                    print(f"Error: {response.status_code} for query at ({x}, {y}): %s" % (response.json()))
+                else:
+                    print(f"Error: {response.status_code} for query at ({x}, {y}): %s" % (response.text))
             
             # Move to next grid and pause
             y += grid_size
             num_complete += 1
-            print("%d / %d complete." % (num_complete, num_total))
+            time_elapsed = time.time() - start_time
+            print(get_time_estimate_string(time_elapsed, num_complete, num_total))
+            #print("%d / %d complete." % (num_complete, num_total))
             time.sleep(wait_time)
         x += grid_size
+
+    print("%d queries were restricted to %d features." % (num_limited_by_max_record_count, max_record_count))
     
     # Save the results as GeoJSON
     geojson_output = {
@@ -68,18 +98,26 @@ def query_all_data(base_url, output_geojson_filepath, minX, minY, maxX, maxY, wa
 
 def main():
     parser = argparse.ArgumentParser(description="Query data from a MapServer.")
-    parser.add_argument("-X", "--min-x", required=True, type=float, help="West border of query region")
-    parser.add_argument("-Y", "--min-y", required=True, type=float, help="South border of query region")
-    parser.add_argument("-U", "--max-x", required=True, type=float, help="East border of query region")
-    parser.add_argument("-V", "--max-y", required=True, type=float, help="North border of query region")
-    parser.add_argument("--base-url", required=True, help="MapServer url (ending with /MapServer/<number>/query)")
+    parser.add_argument("-n", "--layer-number", required=True, type=int, help="The number of the layer on the server.")
+    parser.add_argument("--detect-full-extents", action="store_true", help="Use the server's extents instead of manually specifying them.")
+    parser.add_argument("-X", "--min-x", required=False, type=float, help="West border of query region")
+    parser.add_argument("-Y", "--min-y", required=False, type=float, help="South border of query region")
+    parser.add_argument("-U", "--max-x", required=False, type=float, help="East border of query region")
+    parser.add_argument("-V", "--max-y", required=False, type=float, help="North border of query region")
+    parser.add_argument("--base-url", required=True, help="MapServer url (ending with /MapServer)")
     parser.add_argument("--wait-time", type=float, required=True, help="Seconds between queries")
     parser.add_argument("--grid-size", required=False, type=float, help="Grid size (defaults to degrees)")
     parser.add_argument("--output-geojson-filepath", required=True, help="Output geojson filepath")
 
     args = parser.parse_args()
 
-    query_all_data(args.base_url, args.output_geojson_filepath, args.min_x, args.min_y, args.max_x, args.max_y, args.wait_time, args.grid_size if args.grid_size else 0.001)
+    if args.detect_full_extents:
+        if args.min_x or args.min_y or args.max_x or args.max_y:
+            raise ValueError("Cannot both specify extents and ask to detect extents.")
+        query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time, args.grid_size if args.grid_size else 0.001)
+    elif not (args.min_x and args.min_y and args.max_x and args.max_y):
+        raise ValueError("Must specify all of min_x, min_y, max_x, max_y.")
+    query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time, args.grid_size if args.grid_size else 0.001, args.min_x, args.min_y, args.max_x, args.max_y)
 
 if __name__ == "__main__":
     main()
