@@ -64,13 +64,16 @@ def query_all_data(base_url, layer_number, output_geojson_filepath, wait_time, g
             response = requests.get(url, params=query)
             
             if response.status_code == 200:
-                data = response.json()
-                if "features" in data:
-                    if len(data["features"]) == max_record_count:
-                        print("Reached maximum of %d features returned by a single query at %f, %f, %f, %f." % (max_record_count, x, y, x_max, y_max))
-                        num_limited_by_max_record_count += 1
-                    features.extend(data["features"])
-                    print(f"Retrieved {len(data['features'])} features from ({x}, {y}) to ({x_max}, {y_max})")
+                try:
+                    data = response.json()
+                    if "features" in data:
+                        if len(data["features"]) == max_record_count:
+                            print("Reached maximum of %d features returned by a single query at %f, %f, %f, %f." % (max_record_count, x, y, x_max, y_max))
+                            num_limited_by_max_record_count += 1
+                        features.extend(data["features"])
+                        print(f"Retrieved {len(data['features'])} features from ({x}, {y}) to ({x_max}, {y_max})")
+                except requests.exceptions.JSONDecodeError:
+                    print("Failed to decode JSON at %f, %f, %f, %f." % (x, y, x_max, y_max))
             else:
                 if response.headers.get("Content-Type") == "application/json":
                     print(f"Error: {response.status_code} for query at ({x}, {y}): %s" % (response.json()))
@@ -82,7 +85,6 @@ def query_all_data(base_url, layer_number, output_geojson_filepath, wait_time, g
             num_complete += 1
             time_elapsed = time.time() - start_time
             print(get_time_estimate_string(time_elapsed, num_complete, num_total))
-            #print("%d / %d complete." % (num_complete, num_total))
             time.sleep(wait_time)
         x += grid_size
 
@@ -99,7 +101,6 @@ def query_all_data(base_url, layer_number, output_geojson_filepath, wait_time, g
 def main():
     parser = argparse.ArgumentParser(description="Query data from a MapServer.")
     parser.add_argument("-n", "--layer-number", required=True, type=int, help="The number of the layer on the server.")
-    parser.add_argument("--detect-full-extents", action="store_true", help="Use the server's extents instead of manually specifying them.")
     parser.add_argument("-X", "--min-x", required=False, type=float, help="West border of query region")
     parser.add_argument("-Y", "--min-y", required=False, type=float, help="South border of query region")
     parser.add_argument("-U", "--max-x", required=False, type=float, help="East border of query region")
@@ -111,9 +112,8 @@ def main():
 
     args = parser.parse_args()
 
-    if args.detect_full_extents:
-        if args.min_x or args.min_y or args.max_x or args.max_y:
-            raise ValueError("Cannot both specify extents and ask to detect extents.")
+    if not (args.min_x or args.min_y or args.max_x or args.max_y):
+        # If none are specified, detect the extents
         query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time, args.grid_size if args.grid_size else 0.001)
     else:
         if not (args.min_x and args.min_y and args.max_x and args.max_y):
