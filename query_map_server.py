@@ -1,9 +1,12 @@
 import argparse
 import requests
 import json
+import subprocess
 import time
 
 from general_utility import get_time_estimate_string
+
+CONVERT_TO_SHAPEFILE_NAME = "geojson_to_shapefile.py"
 
 # Configurable variables
 FIELDS = "*"  # Fields to retrieve, '*' for all fields
@@ -109,6 +112,7 @@ def main():
     parser.add_argument("--wait-time", type=float, required=True, help="Seconds between queries")
     parser.add_argument("--grid-size", required=False, type=float, help="Grid size (defaults to degrees)")
     parser.add_argument("--output-geojson-filepath", required=True, help="Output geojson filepath")
+    parser.add_argument("--convert-to-shapefile", action='store_true', help="Convert geojson to shp.zip with the same name.")
 
     args = parser.parse_args()
 
@@ -119,6 +123,10 @@ def main():
         if not (args.min_x and args.min_y and args.max_x and args.max_y):
             raise ValueError("Must specify all of min_x, min_y, max_x, max_y.")
         query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time, args.grid_size if args.grid_size else 0.001, args.min_x, args.min_y, args.max_x, args.max_y)
+
+    if args.convert_to_shapefile:
+        p = subprocess.Popen(['python3', CONVERT_TO_SHAPEFILE_NAME, "-i", args.output_geojson_filepath], shell=True)
+        p.communicate()
 
 if __name__ == "__main__":
     main()
