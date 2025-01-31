@@ -13,8 +13,8 @@ def main():
     parser.add_argument("-n", "--layer-number", required=True, type=int, help="The number of the layer on the server.")
     parser.add_argument("--base-url", required=True, help="FeatureServer url (ending with /FeatureServer)")
     parser.add_argument("--wait-time", type=float, required=True, help="Seconds between queries")
-    parser.add_argument("--output-geojson-filepath", required=True, help="Output geojson filepath")
-    parser.add_argument("--convert-to-shapefile", action='store_true', help="Convert geojson to shp.zip with the same name.")
+    parser.add_argument("-o", "--output-geojson-filepath", required=True, help="Output geojson filepath")
+    parser.add_argument("--dont-convert-to-shapefile", action='store_true', help="Don't convert geojson to shp.zip with the same name.")
     parser.add_argument("--result-record-count", default=1000, type=int, help="How many records to request per query.")
 
     args = parser.parse_args()
@@ -75,7 +75,7 @@ def main():
     f.write(json.dumps(geojson_output))
     f.close()
 
-    if args.convert_to_shapefile:
+    if not args.dont_convert_to_shapefile:
         p = subprocess.Popen(['python3', CONVERT_TO_SHAPEFILE_NAME, "-i", args.output_geojson_filepath], shell=True)
         p.communicate()
 

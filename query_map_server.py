@@ -69,8 +69,16 @@ def query_all_data(base_url, layer_number, output_geojson_filepath, wait_time, g
             
             # Build and execute the query
             query = build_query(x, y, x_max, y_max)
-            response = requests.get(url, params=query)
-            
+            try:
+                response = requests.get(url, params=query)
+            except:
+                print("Failure at %f, %f, %f, %f. Retrying." % (x, y, x_max, y_max))
+                try:
+                    response = requests.get(url, params=query)
+                except:
+                    reponse = None
+            if response == None:
+                print("Incomplete read for %f, %f, %f, %f." % (x, y, x_max, y_max))
             if response.status_code == 200:
                 try:
                     data = response.json()
@@ -122,8 +130,8 @@ def main():
     parser.add_argument("--base-url", required=True, help="MapServer url (ending with /MapServer)")
     parser.add_argument("--wait-time", type=float, required=True, help="Seconds between queries")
     parser.add_argument("--grid-size", required=False, type=float, help="Grid size (defaults to degrees)")
-    parser.add_argument("--output-geojson-filepath", required=True, help="Output geojson filepath")
-    parser.add_argument("--convert-to-shapefile", action='store_true', help="Convert geojson to shp.zip with the same name.")
+    parser.add_argument("-o", "--output-geojson-filepath", required=True, help="Output geojson filepath")
+    parser.add_argument("--dont-convert-to-shapefile", action='store_true', help="Don't convert geojson to shp.zip with the same name.")
     parser.add_argument("--sudo", action='store_true', help="You will be prompted to pass this to run a very large set of requests.")
 
     args = parser.parse_args()
@@ -136,7 +144,7 @@ def main():
             raise ValueError("Must specify all of min_x, min_y, max_x, max_y.")
         query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time, args.grid_size if args.grid_size else 0.001, args.sudo, args.min_x, args.min_y, args.max_x, args.max_y)
 
-    if args.convert_to_shapefile:
+    if not args.dont_convert_to_shapefile:
         p = subprocess.Popen(['python3', CONVERT_TO_SHAPEFILE_NAME, "-i", args.output_geojson_filepath], shell=True)
         p.communicate()
 
