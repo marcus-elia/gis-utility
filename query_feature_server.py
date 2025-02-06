@@ -55,14 +55,16 @@ def main():
         if "features" in data:
             all_features.extend(data["features"])
 
-        # Stop if no more features
-        if len(data["features"]) < params["resultRecordCount"]:
-            break
+            # Stop if no more features
+            if len(data["features"]) < params["resultRecordCount"]:
+                break
+        else:
+            print("Warning: did not get anything for features %d - %d." % (params["resultOffset"], params["resultOffset"] + params["resultRecordCount"]))
 
         # Increment offset for next batch
         params["resultOffset"] += params["resultRecordCount"]
         time.sleep(args.wait_time)
-        if num_features != None:
+        if num_features != None and len(all_features) != 0:
             time_elapsed = time.time() - start_time
             print(get_time_estimate_string(time_elapsed, len(all_features), num_features))
 
