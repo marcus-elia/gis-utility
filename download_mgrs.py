@@ -9,6 +9,11 @@ x and y both increase by 15.
 """
 
 import argparse
+import os
+import requests
+import time
+
+from general_utility import get_time_estimate_string
 
 def next_letter(letter):
     """
@@ -142,7 +147,10 @@ def main():
     num_tiles_x += 1
     num_tiles_y += 1
     num_tiles = num_tiles_x * num_tiles_y
+    num_complete = 0
+    start_time = time.time()
     col_start_tile = tile1.copy()
+    num_failures = 0
     print("There are %d tiles in this area." % (num_tiles))
     for i in range(num_tiles_x):
         current_tile = col_start_tile.copy()
@@ -150,12 +158,24 @@ def main():
             tile_name = current_tile.string(args.num_digits)
             filename = tile_name + args.filename_suffix
             full_url = args.base_url + filename
+            num_complete += 1
             if args.dry_run:
                 print("Would download %s." % (full_url))
             else:
-                pass
+                output_filepath = os.path.join(args.output_directory, filename)
+                response = requests.get(full_url)
+                if response.status_code == 200:
+                    with open(output_filepath, 'wb') as f:
+                        f.write(response.content)
+                    print("Downloaded %s." % (full_url))
+                else:
+                    num_failures += 1
+                    print("Failed to download %s." % (full_url))
+                print(get_time_estimate_string(time.time() - start_time, num_complete, num_tiles))
             current_tile = current_tile.next_tile_north(args.increment)
         col_start_tile = col_start_tile.next_tile_east(args.increment)
+    if num_failures != 0:
+        print("%d failed to download." % (num_failures))
 
 if __name__ == "__main__":
     main()
