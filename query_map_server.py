@@ -15,9 +15,9 @@ FORMAT = "geojson"  # Response format
 MAX_NUM_REQUESTS = 10000 # Don't do more than this without confirming the user wants it
 
 # Helper function to build query
-def build_query(minX, minY, maxX, maxY):
+def build_query(minX, minY, maxX, maxY, where):
     return {
-        "where": "1=1",  # Get all features in this geometry
+        "where": where,
         "geometry": f"{minX},{minY},{maxX},{maxY}",
         "geometryType": "esriGeometryEnvelope",
         "spatialRel": "esriSpatialRelIntersects",
@@ -55,7 +55,7 @@ def get_server_info(base_url):
     return (max_record_count, num_features, (minX, minY, maxX, maxY))
 
 # Main function to query the server
-def query_all_data(base_url, layer_number, output_geojson_filepath, wait_time, grid_size, sudo=False, minX=None, minY=None, maxX=None, maxY=None):
+def query_all_data(base_url, layer_number, output_geojson_filepath, where, wait_time, grid_size, sudo=False, minX=None, minY=None, maxX=None, maxY=None):
     features = []
 
     # Get the max number of results that can be returned, so we can check if we ever hit it.
@@ -83,7 +83,7 @@ def query_all_data(base_url, layer_number, output_geojson_filepath, wait_time, g
             y_max = min(y + grid_size, maxY)
             
             # Build and execute the query
-            query = build_query(x, y, x_max, y_max)
+            query = build_query(x, y, x_max, y_max, where)
             try:
                 response = requests.get(url, params=query)
             except:
@@ -149,8 +149,13 @@ def main():
     parser.add_argument("--dont-convert-to-shapefile", action='store_true', help="Don't convert geojson to shp.zip with the same name.")
     parser.add_argument("--sudo", action='store_true', help="You will be prompted to pass this to run a very large set of requests.")
     parser.add_argument("--subdivide", required=False, type=int, help="Split the job into an n x n square of jobs, resulting in n^2 files.")
+    parser.add_argument("--require-tag", required=False, help="Pass a 'key=value' string to only get features with this attribute.")
+    parser.add_argument("--avoid-tag", required=False, help="Pass a 'key=value' string to only get features without this attribute.")
 
     args = parser.parse_args()
+
+    if args.require_tag and args.avoid_tag:
+        raise ValueError("Cannot yet make multiple attribute restrictions. Only pass one of --require-tag and --avoid-tag.")
 
     # If subdividing, use subprocess to run this script a bunch of times
     if args.subdivide:
@@ -182,20 +187,35 @@ def main():
                     command_list.append("--sudo")
                 if args.dont_convert_to_shapefile:
                     command_list.append("--dont-convert-to-shapefile")
+                if args.require_tag:
+                    command_list.append("--require-tag")
+                    comment_list.append(args.require_tag)
+                if args.avoid_tag:
+                    command_list.append("--avoid-tag")
+                    command_list.append(args.avoid_tag)
                 print(command_list)
                 p = subprocess.Popen(command_list, shell=True)
                 p.communicate()
                 filename_index += 1
     else:
+        if args.require_tag:
+            key, value = args.require_tag.split('=')
+            where = str(key) + " = " + "'%s'" % (value)
+        elif args.avoid_tag:
+            key, value = args.avoid_tag.split('=')
+            where = str(key) + " != " + "'%s'" % (value)
+        else:
+            where = "1=1"
+
         # If not subdiving, run this script's functionality once
         if not (args.min_x or args.min_y or args.max_x or args.max_y):
             # If none are specified, detect the extents
-            query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time,\
+            query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, where, args.wait_time,\
                     args.grid_size if args.grid_size else 0.001, sudo=args.sudo)
         else:
             if not (args.min_x and args.min_y and args.max_x and args.max_y):
                 raise ValueError("Must specify all of min_x, min_y, max_x, max_y.")
-            query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, args.wait_time,\
+            query_all_data(args.base_url, args.layer_number, args.output_geojson_filepath, where, args.wait_time,\
                     args.grid_size if args.grid_size else 0.001, args.sudo, args.min_x, args.min_y, args.max_x, args.max_y)
 
         if not args.dont_convert_to_shapefile:
