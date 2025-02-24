@@ -51,7 +51,7 @@ def main():
             vertices_lonlat = (inv_transformer.transform(x, y) for x,y in vertices_meters)
             vertices_latlon = [(lat, lon) for lon,lat in vertices_lonlat]
             geojson_poly = geojson.Polygon([vertices_latlon])
-            properties = {"name" : str(square_index)}
+            properties = {"square_index" : str(square_index)}
             if args.osm_tag:
                 properties[key] = value
             features.append(geojson.Feature(geometry=geojson_poly, properties=properties))
