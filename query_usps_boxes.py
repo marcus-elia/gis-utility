@@ -61,6 +61,8 @@ def main():
         locations = response.json()['locations']
         for box_info in locations:
             loc_id = box_info["locationID"]
+            if loc_id == None or box_info["longitude"] == None or box_info["latitude"] == None:
+                continue
             if not loc_id in collection_box_locations:
                 point = Point(box_info["longitude"], box_info["latitude"])
                 collection_box_locations[loc_id] = {"locationID": loc_id, "address": box_info["address1"], "geometry": point}
