@@ -1,0 +1,202 @@
+import argparse
+import json
+import math
+import mercantile
+import os
+import requests
+from pyproj import Transformer
+from vt2geojson.tools import vt_bytes_to_geojson
+
+# Configuration
+access_token = "MLY|9579478658738838|77aac5cb29c86a35823e17be7aee23ac"  # Replace with your Mapillary access token
+tile_layer = "image"
+tile_endpoint = "mly1_public"
+default_radius_m = 200
+
+transformer_to_web_mercator = Transformer.from_crs(
+    "EPSG:4326", "EPSG:3857", always_xy=True
+)
+transformer_to_latlon = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+
+
+def calculate_fov(normalized_focal_length, image_width, image_height):
+    """
+    Calculate horizontal and vertical FOVs assuming the focal length is normalized by image width.
+
+    Args:
+        focal_length (normalized).
+        image_width (int): Image width in pixels.
+        image_height (int): Image height in pixels.
+
+    Returns:
+        tuple: (horizontal_fov, vertical_fov) in degrees.
+    """
+    # Calculate focal length in pixels (denormalizing it)
+    focal_length_pixels = normalized_focal_length * image_width
+
+    # Horizontal and vertical FOV calculations (in degrees)
+    horizontal_fov = (
+        2 * math.atan(image_width / (2 * focal_length_pixels)) * (180 / math.pi)
+    )
+    vertical_fov = (
+        2 * math.atan(image_height / (2 * focal_length_pixels)) * (180 / math.pi)
+    )
+
+    return horizontal_fov, vertical_fov
+
+
+# Create bounding box of radius r meters around (lat, lon)
+def create_bounding_box(lat, lon, r=default_radius_m):
+    x, y = transformer_to_web_mercator.transform(lon, lat)
+    x_min, y_min = x - r, y - r
+    x_max, y_max = x + r, y + r
+    lon_min, lat_min = transformer_to_latlon.transform(x_min, y_min)
+    lon_max, lat_max = transformer_to_latlon.transform(x_max, y_max)
+    return lon_min, lat_min, lon_max, lat_max
+
+
+# Step 1: Fetch image IDs around the point and save to GeoJSON
+def fetch_image_points(lat, lon, zoom, n, output_file):
+    lon_min, lat_min, lon_max, lat_max = create_bounding_box(lat, lon)
+    tiles = list(mercantile.tiles(lon_min, lat_min, lon_max, lat_max, zoom))
+    output = {"type": "FeatureCollection", "features": []}
+
+    for tile in tiles:
+        tile_url = f"https://tiles.mapillary.com/maps/vtp/{tile_endpoint}/2/{tile.z}/{tile.x}/{tile.y}?access_token={access_token}"
+        response = requests.get(tile_url)
+        tile_data = vt_bytes_to_geojson(
+            response.content, tile.x, tile.y, tile.z, layer=tile_layer
+        )
+
+        for feature in tile_data["features"]:
+            properties = feature.get("properties", {})
+            image_id = properties.get("id")
+            compass_angle = properties.get("compass_angle")
+            is_pano = properties.get("is_pano")
+
+            if image_id and lon and lat:
+                distance = math.sqrt(
+                    (lon - feature["geometry"]["coordinates"][0]) ** 2
+                    + (lat - feature["geometry"]["coordinates"][1]) ** 2
+                )
+                output["features"].append(
+                    {
+                        "type": "Feature",
+                        "geometry": feature["geometry"],
+                        "properties": {
+                            "image_id": image_id,
+                            "compass_angle": compass_angle,
+                            "is_pano": is_pano,
+                            "captured_at": properties.get("captured_at"),
+                            "distance": distance,
+                        },
+                    }
+                )
+
+    # Sort by distance and keep only the n closest points
+    output["features"].sort(key=lambda x: x["properties"]["distance"])
+    output["features"] = output["features"][:n]
+
+    # Save filtered points to GeoJSON
+    with open(output_file, "w") as f:
+        json.dump(output, f)
+    print(f"Saved {len(output['features'])} closest image points to {output_file}")
+
+
+# Step 2: Fetch metadata (like FOV and elevation) using the Graph API and update the GeoJSON
+def fetch_image_metadata(input_file, output_file):
+    with open(input_file, "r") as f:
+        geojson_data = json.load(f)
+
+    for feature in geojson_data["features"]:
+        image_id = feature["properties"]["image_id"]
+        metadata_url = f"https://graph.mapillary.com/{image_id}?fields=id,altitude,camera_parameters,width,height,compass_angle,computed_altitude,computed_compass_angle,geometry&access_token={access_token}"
+        response = requests.get(metadata_url)
+        metadata = response.json()
+
+        # Extract metadata and update feature properties
+        altitude = metadata.get("altitude")
+        computed_altitude = metadata.get("computed_altitude")
+        compass_angle = metadata.get("compass_angle")
+        computed_compass_angle = metadata.get("computed_compass_angle")
+        camera_parameters = metadata.get("camera_parameters")
+        width = metadata.get("width")
+        height = metadata.get("height")
+        focal_length = (
+            camera_parameters[0]
+            if camera_parameters and len(camera_parameters) > 0
+            else None
+        )
+
+        horizontal_fov, vertical_fov = calculate_fov(focal_length, width, height)
+
+        feature["geometry"]["coordinates"] = metadata["geometry"]["coordinates"]
+        feature["properties"].update(
+            {
+                "altitude": altitude,
+                "computed_altitude": computed_altitude,
+                "compass_angle": compass_angle,
+                "computed_compass_angle": computed_compass_angle,
+                "focal_length": focal_length,
+                "image_width": width,
+                "image_height": height,
+                "horizontal_fov": horizontal_fov,
+                "vertical_fov": vertical_fov,
+                "image_url": f"https://www.mapillary.com/app/?pKey={image_id}",
+            }
+        )
+
+    # Save the updated GeoJSON with metadata
+    with open(output_file, "w") as f:
+        json.dump(geojson_data, f)
+    print(f"Saved image metadata to {output_file}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fetch Mapillary image data and metadata near a point."
+    )
+    parser.add_argument(
+        "-lat",
+        "--latitude",
+        type=float,
+        required=True,
+        help="Latitude of the center point",
+    )
+    parser.add_argument(
+        "-lon",
+        "--longitude",
+        type=float,
+        required=True,
+        help="Longitude of the center point",
+    )
+    parser.add_argument(
+        "-n",
+        "--num-images",
+        type=int,
+        default=20,
+        help="Number of closest images to fetch",
+    )
+    parser.add_argument("-L", "--lod", type=int, default=14, help="Tile zoom level")
+    parser.add_argument(
+        "-o", "--output-dir", type=str, required=True, help="Output directory"
+    )
+    args = parser.parse_args()
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    points_file = os.path.join(args.output_dir, "mapillary_image_points.geojson")
+    metadata_file = os.path.join(
+        args.output_dir, "mapillary_images_with_metadata.geojson"
+    )
+
+    # Step 1: Fetch and filter image points around the given lat/lon
+    fetch_image_points(
+        args.latitude, args.longitude, args.lod, args.num_images, points_file
+    )
+
+    # Step 2: Fetch detailed metadata and update the GeoJSON
+    fetch_image_metadata(points_file, metadata_file)
+
+
+if __name__ == "__main__":
+    main()
