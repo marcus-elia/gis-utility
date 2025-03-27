@@ -16,8 +16,7 @@ def main():
         help="Lat,lon of the center of the building",
     )
     parser.add_argument(
-        "-n",
-        "--num-images",
+        "--num-images-to-fetch",
         type=int,
         default=30,
         help="Number of closest images to fetch",
@@ -37,14 +36,23 @@ def main():
         help="Time to wait between each image metadata request",
     )
     parser.add_argument(
-        "--downloaded-image-filename",
+        "--num-images-to-download",
+        type=int,
+        default=4,
+        help="Max number of images to download",
+    )
+    parser.add_argument(
+        "-b",
+        "--building-name",
         type=str,
-        help="Name for downloaded image that gets chosen.",
+        help="Name to identify building that will be used as filename prefix",
     )
     parser.add_argument(
         "-o", "--output-dir", type=str, required=True, help="Output directory"
     )
     args = parser.parse_args()
+
+    building_dir = os.path.join(args.output_dir, args.building_name)
 
     # Run the script to create a GeoJSON containing all nearby image points with the necessary metadata.
     print("Executing `mapillary_nearest_images.py`.")
@@ -55,19 +63,16 @@ def main():
             "--latlon",
             args.latlon,
             "-n",
-            str(args.num_images),
+            str(args.num_images_to_fetch),
             "-r",
             str(args.search_radius_meters),
             "-t",
             str(args.sleep_time),
             "-o",
-            args.output_dir,
+            building_dir,
         ]
     )
     p.communicate()
-
-    geojson_path = os.path.join(args.output_dir, image_metadata_name)
-    image_path = os.path.join(args.output_dir, args.downloaded_image_filename)
 
     # Run the script to get the best image from the GeoJSON that was just generated.
     print("Executing `mapillary_get_best_image.py`.")
@@ -77,15 +82,15 @@ def main():
             "mapillary_get_best_image.py",
             "--target",
             args.latlon,
-            "--geojson-path",
-            geojson_path,
-            "--downloaded-image-filepath",
-            image_path,
+            "--num-images",
+            str(args.num_images_to_download),
+            "-b",
+            args.building_name,
+            "-o",
+            building_dir,
         ]
     )
     p.communicate()
-
-    print("Image downloaded to %s." % (image_path))
 
 
 if __name__ == "__main__":

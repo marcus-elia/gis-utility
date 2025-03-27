@@ -138,6 +138,8 @@ def fetch_image_metadata(input_file, output_file, sleep_time):
             else None
         )
 
+        if focal_length == None or width == None or height == None:
+            continue
         horizontal_fov, vertical_fov = calculate_fov(focal_length, width, height)
 
         feature["geometry"]["coordinates"] = metadata["geometry"]["coordinates"]

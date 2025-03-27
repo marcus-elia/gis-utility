@@ -1,11 +1,17 @@
 import argparse
 import json
 import math
+import os
 import requests
 from geopy.distance import geodesic
 
+from mapillary_nearest_images import image_metadata_name
+
 API_KEY = "MLY|9579478658738838|77aac5cb29c86a35823e17be7aee23ac"
 API_BASE_URL = "https://a.mapillary.com/v3/images/"
+
+# Any image further than this from the building is not useful (meters)
+MAX_ALLOWED_DISTANCE = 300
 
 
 def download_image(image_id, image_filepath):
@@ -57,18 +63,19 @@ def is_within_fov(target_bearing, image_bearing, horizontal_fov):
         return target_bearing >= min_bearing or target_bearing <= max_bearing
 
 
-def find_best_image(target_point, geojson_file):
+def find_best_images(target_point, num_images, geojson_file):
     """Find the best image that is facing the target point."""
     with open(geojson_file, "r") as file:
         data = json.load(file)
 
-    best_image = None
-    closest_distance = float("inf")
+    images = []
 
     for feature in data["features"]:
         props = feature["properties"]
         coords = feature["geometry"]["coordinates"]
         image_lat, image_lon = coords[1], coords[0]
+        if not "computed_compass_angle" in props:
+            continue
         compass_angle = props["computed_compass_angle"]
         horizontal_fov = props["horizontal_fov"]
 
@@ -76,11 +83,12 @@ def find_best_image(target_point, geojson_file):
         distance_to_target = geodesic((image_lat, image_lon), target_point).meters
         target_bearing = bearing(image_lat, image_lon, *target_point)
 
-        # Check if target is within the image's field of view
-        if is_within_fov(target_bearing, compass_angle, horizontal_fov):
-            if distance_to_target < closest_distance:
-                closest_distance = distance_to_target
-                best_image = {
+        # Check if target is within the image's field of view and close enough
+        if distance_to_target < MAX_ALLOWED_DISTANCE and is_within_fov(
+            target_bearing, compass_angle, horizontal_fov
+        ):
+            images.append(
+                {
                     "image_id": props["image_id"],
                     "latitude": image_lat,
                     "longitude": image_lon,
@@ -90,8 +98,9 @@ def find_best_image(target_point, geojson_file):
                     "horizontal_fov": horizontal_fov,
                     "image_url": props["image_url"],
                 }
+            )
 
-    return best_image
+    return images if len(images) <= num_images else images[:num_images]
 
 
 if __name__ == "__main__":
@@ -104,23 +113,36 @@ if __name__ == "__main__":
         help="Target latitude and longitude in the form 'lat,lon'.",
     )
     parser.add_argument(
-        "--geojson-path",
-        type=str,
-        help="Path to the GeoJSON file containing image nodes.",
+        "--num-images", type=int, required=True, help="Max number of images to download"
     )
     parser.add_argument(
-        "--downloaded-image-filepath",
+        "-b",
+        "--building-name",
         type=str,
-        help="Path to download the image that gets chosen.",
+        help="Name to identify building that will be used as filename prefix",
+    )
+    parser.add_argument(
+        "-o",
+        "--building-dir",
+        type=str,
+        help="Building-specific directory where output files are created",
     )
     args = parser.parse_args()
 
-    best_image = find_best_image(args.target, args.geojson_path)
-    if best_image:
-        print("Best image found:")
-        print(json.dumps(best_image, indent=4))
+    image_point_geojson_path = os.path.join(args.building_dir, image_metadata_name)
+    image_metadatas = find_best_images(
+        args.target, args.num_images, image_point_geojson_path
+    )
+    if image_metadatas:
+        for i in range(len(image_metadatas)):
+            print("Image #%d:" % (i + 1))
+            print(json.dumps(image_metadatas[i], indent=4))
 
-        download_image(best_image["image_id"], args.downloaded_image_filepath)
+            image_filepath = os.path.join(
+                args.building_dir, args.building_name + str(i + 1) + ".jpg"
+            )
+            download_image(image_metadatas[i]["image_id"], image_filepath)
+            print("Image downloaded to %s." % (image_filepath))
 
     else:
         print("No suitable image found.")
