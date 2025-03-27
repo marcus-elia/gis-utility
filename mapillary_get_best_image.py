@@ -1,7 +1,24 @@
 import argparse
 import json
 import math
+import requests
 from geopy.distance import geodesic
+
+API_KEY = "MLY|9579478658738838|77aac5cb29c86a35823e17be7aee23ac"
+API_BASE_URL = "https://a.mapillary.com/v3/images/"
+
+
+def download_image(image_id, image_filepath):
+
+    header = {"Authorization": "OAuth {}".format(API_KEY)}
+    url = "https://graph.mapillary.com/{}?fields=thumb_2048_url".format(image_id)
+    r = requests.get(url, headers=header)
+    data = r.json()
+    image_url = data["thumb_2048_url"]
+
+    with open(image_filepath, "wb") as f:
+        image_data = requests.get(image_url, stream=True).content
+        f.write(image_data)
 
 
 def parse_lat_lon(lat_lon_str):
@@ -91,11 +108,19 @@ if __name__ == "__main__":
         type=str,
         help="Path to the GeoJSON file containing image nodes.",
     )
+    parser.add_argument(
+        "--downloaded-image-filepath",
+        type=str,
+        help="Path to download the image that gets chosen.",
+    )
     args = parser.parse_args()
 
     best_image = find_best_image(args.target, args.geojson_path)
     if best_image:
         print("Best image found:")
         print(json.dumps(best_image, indent=4))
+
+        download_image(best_image["image_id"], args.downloaded_image_filepath)
+
     else:
         print("No suitable image found.")

@@ -13,6 +13,8 @@ access_token = "MLY|9579478658738838|77aac5cb29c86a35823e17be7aee23ac"  # Replac
 tile_layer = "image"
 tile_endpoint = "mly1_public"
 tile_zoom_level = 14
+image_points_name = "mapillary_image_points.geojson"
+image_metadata_name = "mapillary_images_with_metadata.geojson"
 
 transformer_to_web_mercator = Transformer.from_crs(
     "EPSG:4326", "EPSG:3857", always_xy=True
@@ -201,10 +203,8 @@ def main():
     lat, lon = (float(x.strip()) for x in args.latlon.split(","))
 
     os.makedirs(args.output_dir, exist_ok=True)
-    points_file = os.path.join(args.output_dir, "mapillary_image_points.geojson")
-    metadata_file = os.path.join(
-        args.output_dir, "mapillary_images_with_metadata.geojson"
-    )
+    points_file = os.path.join(args.output_dir, image_points_name)
+    metadata_file = os.path.join(args.output_dir, image_metadata_name)
 
     # Step 1: Fetch and filter image points around the given lat/lon
     fetch_image_points(
