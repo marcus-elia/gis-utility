@@ -1,9 +1,8 @@
 import argparse
 import json
-import math
 import os
 import requests
-from geopy.distance import geodesic
+from shapely import from_geojson, Polygon
 
 from mapillary_nearest_images import image_metadata_name
 
@@ -27,40 +26,19 @@ def download_image(image_id, image_filepath):
         f.write(image_data)
 
 
-def parse_lat_lon(lat_lon_str):
-    """Parse latitude and longitude from the input string."""
-    try:
-        lat, lon = map(float, lat_lon_str.split(","))
-        return lat, lon
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            "Invalid format for latitude/longitude. Use 'lat,lon'."
-        )
+def building_polygon_from_geojson(geojson_filepath):
+    """
+    Requires the geojson to contain a single polygon. Returns a shapely version of it.
+    """
+    with open(geojson_filepath, "r") as file:
+        geojson_data = json.load(file)
 
+    polygon = from_geojson(geojson_data["geometry"])
 
-# def bearing(lat1, lon1, lat2, lon2):
-#     """Calculate the bearing from (lat1, lon1) to (lat2, lon2)."""
-#     delta_lon = math.radians(lon2 - lon1)
-#     lat1, lat2 = math.radians(lat1), math.radians(lat2)
+    if not isinstance(polygon, Polygon):
+        raise ValueError("The GeoJSON does not contain a valid polygon.")
 
-#     x = math.sin(delta_lon) * math.cos(lat2)
-#     y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(
-#         delta_lon
-#     )
-#     initial_bearing = math.atan2(x, y)
-#     return (math.degrees(initial_bearing) + 360) % 360
-
-
-# def is_within_fov(target_bearing, image_bearing, horizontal_fov):
-#     """Check if the target bearing falls within the image's horizontal field of view."""
-#     half_fov = horizontal_fov / 2
-#     min_bearing = (image_bearing - half_fov) % 360
-#     max_bearing = (image_bearing + half_fov) % 360
-
-#     if min_bearing < max_bearing:
-#         return min_bearing <= target_bearing <= max_bearing
-#     else:
-#         return target_bearing >= min_bearing or target_bearing <= max_bearing
+    return polygon
 
 
 def get_image_metadatas(geojson_file):
@@ -69,44 +47,17 @@ def get_image_metadatas(geojson_file):
     return [feature["properties"] for feature in data["features"]]
 
 
-# def find_best_images(target_point, num_images, geojson_file):
-#     """Find the best image that is facing the target point."""
-#     with open(geojson_file, "r") as file:
-#         data = json.load(file)
+def score_image_relevance(image_metadata):
+    distance = image_metadata["distance_from_target"]
+    angle = abs(image_metadata["angle_delta"])
+    distance = min(distance, 200)
+    angle = min(angle, 45)
+    # Lower score means better
+    return 1 - 1 / (1 + 5 * angle + distance)
 
-#     images = []
 
-#     for feature in data["features"]:
-#         props = feature["properties"]
-#         coords = feature["geometry"]["coordinates"]
-#         image_lat, image_lon = coords[1], coords[0]
-#         if not "computed_compass_angle" in props:
-#             continue
-#         compass_angle = props["computed_compass_angle"]
-#         horizontal_fov = props["horizontal_fov"]
-
-#         # Calculate distance and bearing to target point
-#         distance_to_target = geodesic((image_lat, image_lon), target_point).meters
-#         target_bearing = bearing(image_lat, image_lon, *target_point)
-
-#         # Check if target is within the image's field of view and close enough
-#         if distance_to_target < MAX_ALLOWED_DISTANCE and is_within_fov(
-#             target_bearing, compass_angle, horizontal_fov
-#         ):
-#             images.append(
-#                 {
-#                     "image_id": props["image_id"],
-#                     "latitude": image_lat,
-#                     "longitude": image_lon,
-#                     "distance_to_target": distance_to_target,
-#                     "bearing_to_target": target_bearing,
-#                     "compass_angle": compass_angle,
-#                     "horizontal_fov": horizontal_fov,
-#                     "image_url": props["image_url"],
-#                 }
-#             )
-
-#     return images if len(images) <= num_images else images[:num_images]
+def sort_images(image_metadatas):
+    return sorted(image_metadatas, key=lambda item: score_image_relevance(item))
 
 
 if __name__ == "__main__":
@@ -114,9 +65,10 @@ if __name__ == "__main__":
         description="Find the best image facing a given target position."
     )
     parser.add_argument(
-        "--target",
-        type=parse_lat_lon,
-        help="Target latitude and longitude in the form 'lat,lon'.",
+        "--target-building-geojson-filepath",
+        type=str,
+        required=False,
+        help="Path to GeoJSON file containing only the footprint of the building.",
     )
     parser.add_argument(
         "--num-images", type=int, required=True, help="Max number of images to download"
@@ -136,17 +88,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     image_point_geojson_path = os.path.join(args.building_dir, image_metadata_name)
-    # image_metadatas = find_best_images(
-    #     args.target, args.num_images, image_point_geojson_path
-    # )
-    image_metadatas = get_image_metadatas(image_point_geojson_path)
+
+    if args.target_building_geojson_filepath:
+        footprint = building_polygon_from_geojson(args.target_building_geojson_filepath)
+
+    image_metadatas = sort_images(get_image_metadatas(image_point_geojson_path))
     if image_metadatas:
         for i in range(min(len(image_metadatas), args.num_images)):
             print("Image #%d:" % (i + 1))
             print(json.dumps(image_metadatas[i], indent=4))
 
             image_filepath = os.path.join(
-                args.building_dir, args.building_name + str(i + 1) + ".jpg"
+                args.building_dir, args.building_name + "_" + str(i + 1) + ".jpg"
             )
             download_image(image_metadatas[i]["image_id"], image_filepath)
             print("Image downloaded to %s." % (image_filepath))

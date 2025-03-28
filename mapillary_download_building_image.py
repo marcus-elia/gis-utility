@@ -72,8 +72,6 @@ def main():
         [
             "python3",
             "mapillary_get_best_image.py",
-            "--target",
-            args.latlon,
             "--num-images",
             str(args.num_images_to_download),
             "-b",

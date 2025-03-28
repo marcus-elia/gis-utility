@@ -172,6 +172,17 @@ def fetch_image_metadata(
         compass_angle = metadata.get("compass_angle")
         computed_compass_angle = metadata.get("computed_compass_angle")
         camera_parameters = metadata.get("camera_parameters")
+        distance = (
+            geodesic(
+                (target_lat, target_lon),
+                (
+                    feature["geometry"]["coordinates"][1],
+                    feature["geometry"]["coordinates"][0],
+                ),
+            ).km
+            * 1000
+        )
+
         width = metadata.get("width")
         height = metadata.get("height")
         focal_length = (
@@ -180,9 +191,9 @@ def fetch_image_metadata(
             else None
         )
 
-        if compass_angle == computed_compass_angle:
-            # If the reported angle wasn't corrected, it is likely incorrect
-            continue
+        # if compass_angle == computed_compass_angle:
+        #    # If the reported angle wasn't corrected, it is likely incorrect
+        #    continue
 
         # Compute FOV
         if focal_length == None or width == None or height == None:
@@ -202,9 +213,11 @@ def fetch_image_metadata(
         if is_within_fov(target_bearing, compass_angle, horizontal_fov):
             properties = {
                 "altitude": altitude,
+                "angle_delta": abs(target_bearing - computed_compass_angle),
                 "computed_altitude": computed_altitude,
                 "compass_angle": compass_angle,
                 "computed_compass_angle": computed_compass_angle,
+                "distance_from_target": distance,
                 "focal_length": focal_length,
                 "image_id": image_id,
                 "image_width": width,
