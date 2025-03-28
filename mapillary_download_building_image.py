@@ -16,12 +16,6 @@ def main():
         help="Lat,lon of the center of the building",
     )
     parser.add_argument(
-        "--num-images-to-fetch",
-        type=int,
-        default=30,
-        help="Number of closest images to fetch",
-    )
-    parser.add_argument(
         "-r",
         "--search-radius-meters",
         type=float,
@@ -62,8 +56,6 @@ def main():
             "mapillary_nearest_images.py",
             "--latlon",
             args.latlon,
-            "-n",
-            str(args.num_images_to_fetch),
             "-r",
             str(args.search_radius_meters),
             "-t",

@@ -1,10 +1,12 @@
 import argparse
+import geojson
 import json
 import math
 import mercantile
 import os
 import requests
 import time
+from geopy.distance import geodesic
 from pyproj import Transformer
 from vt2geojson.tools import vt_bytes_to_geojson
 
@@ -46,6 +48,31 @@ def calculate_fov(normalized_focal_length, image_width, image_height):
     )
 
     return horizontal_fov, vertical_fov
+
+
+def bearing(lat1, lon1, lat2, lon2):
+    """Calculate the bearing from (lat1, lon1) to (lat2, lon2)."""
+    delta_lon = math.radians(lon2 - lon1)
+    lat1, lat2 = math.radians(lat1), math.radians(lat2)
+
+    x = math.sin(delta_lon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(
+        delta_lon
+    )
+    initial_bearing = math.atan2(x, y)
+    return (math.degrees(initial_bearing) + 360) % 360
+
+
+def is_within_fov(target_bearing, image_bearing, horizontal_fov):
+    """Check if the target bearing falls within the image's horizontal field of view."""
+    half_fov = horizontal_fov / 2
+    min_bearing = (image_bearing - half_fov) % 360
+    max_bearing = (image_bearing + half_fov) % 360
+
+    if min_bearing < max_bearing:
+        return min_bearing <= target_bearing <= max_bearing
+    else:
+        return target_bearing >= min_bearing or target_bearing <= max_bearing
 
 
 # Create bounding box of radius r meters around (lat, lon)
@@ -109,7 +136,11 @@ def fetch_image_points(lat, lon, zoom, n, search_radius_meters, output_file):
 
 
 # Step 2: Fetch metadata (like FOV and elevation) using the Graph API and update the GeoJSON
-def fetch_image_metadata(input_file, output_file, sleep_time):
+# Also filter down to the desired number of metadatas by selecting only images containing the
+# building in their FOVs.
+def fetch_image_metadata(
+    target_lat, target_lon, input_file, num_metadatas, output_file, sleep_time
+):
     with open(input_file, "r") as f:
         geojson_data = json.load(f)
     print(
@@ -118,13 +149,24 @@ def fetch_image_metadata(input_file, output_file, sleep_time):
     )
 
     num_complete = 0
+
+    # Sort by distance from target
+    geojson_data["features"].sort(
+        key=lambda item: geodesic(
+            (target_lat, target_lon),
+            (item["geometry"]["coordinates"][1], item["geometry"]["coordinates"][0]),
+        ).meters
+    )
+
+    # Iterate over the images and calculate metadata for the first n that are pointed at the building.
+    features_with_metadata = []
     for feature in geojson_data["features"]:
         image_id = feature["properties"]["image_id"]
         metadata_url = f"https://graph.mapillary.com/{image_id}?fields=id,altitude,camera_parameters,width,height,compass_angle,computed_altitude,computed_compass_angle,geometry&access_token={access_token}"
         response = requests.get(metadata_url)
         metadata = response.json()
 
-        # Extract metadata and update feature properties
+        # Extract metadata
         altitude = metadata.get("altitude")
         computed_altitude = metadata.get("computed_altitude")
         compass_angle = metadata.get("compass_angle")
@@ -138,32 +180,58 @@ def fetch_image_metadata(input_file, output_file, sleep_time):
             else None
         )
 
+        # Compute FOV
         if focal_length == None or width == None or height == None:
+            # If we can't determine the FOV, we can't use this image.
             continue
         horizontal_fov, vertical_fov = calculate_fov(focal_length, width, height)
 
-        feature["geometry"]["coordinates"] = metadata["geometry"]["coordinates"]
-        feature["properties"].update(
-            {
+        # Check if the building is within the image's FOV
+        target_bearing = bearing(
+            feature["geometry"]["coordinates"][1],
+            feature["geometry"]["coordinates"][0],
+            target_lat,
+            target_lon,
+        )
+
+        # Check if target is within the image's field of view and close enough
+        if is_within_fov(target_bearing, compass_angle, horizontal_fov):
+            properties = {
                 "altitude": altitude,
                 "computed_altitude": computed_altitude,
                 "compass_angle": compass_angle,
                 "computed_compass_angle": computed_compass_angle,
                 "focal_length": focal_length,
+                "image_id": image_id,
                 "image_width": width,
                 "image_height": height,
                 "horizontal_fov": horizontal_fov,
                 "vertical_fov": vertical_fov,
                 "image_url": f"https://www.mapillary.com/app/?pKey={image_id}",
             }
-        )
+            feature_with_metadata = geojson.Feature(
+                geometry=feature["geometry"], properties=properties
+            )
+            features_with_metadata.append(feature_with_metadata)
+            if len(features_with_metadata) == num_metadatas:
+                break
+
         time.sleep(sleep_time)
         num_complete += 1
-        print("%d/%d" % (num_complete, len(geojson_data["features"])), end="\r")
+        print(
+            "Checked %d/%d images. Kept %d/%d so far."
+            % (
+                num_complete,
+                len(geojson_data["features"]),
+                len(features_with_metadata),
+                num_metadatas,
+            ),
+            end="\r",
+        )
 
     # Save the updated GeoJSON with metadata
     with open(output_file, "w") as f:
-        json.dump(geojson_data, f)
+        json.dump(geojson.FeatureCollection(features=features_with_metadata), f)
     print(f"\nSaved image metadata to {output_file}")
 
 
@@ -178,11 +246,16 @@ def main():
         help="Lat,lon of the center point",
     )
     parser.add_argument(
-        "-n",
-        "--num-images",
+        "--num-candidates",
+        type=int,
+        default=100,
+        help="Get the ids of this many images",
+    )
+    parser.add_argument(
+        "--num-metadatas",
         type=int,
         default=30,
-        help="Number of closest images to fetch",
+        help="Get the metadata for this many images",
     )
     parser.add_argument(
         "-r",
@@ -213,13 +286,15 @@ def main():
         lat,
         lon,
         tile_zoom_level,
-        args.num_images,
+        args.num_candidates,
         args.search_radius_meters,
         points_file,
     )
 
     # Step 2: Fetch detailed metadata and update the GeoJSON
-    fetch_image_metadata(points_file, metadata_file, args.sleep_time)
+    fetch_image_metadata(
+        lat, lon, points_file, args.num_metadatas, metadata_file, args.sleep_time
+    )
 
 
 if __name__ == "__main__":
