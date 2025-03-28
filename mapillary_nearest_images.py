@@ -180,6 +180,10 @@ def fetch_image_metadata(
             else None
         )
 
+        if compass_angle == computed_compass_angle:
+            # If the reported angle wasn't corrected, it is likely incorrect
+            continue
+
         # Compute FOV
         if focal_length == None or width == None or height == None:
             # If we can't determine the FOV, we can't use this image.
