@@ -223,6 +223,8 @@ def fetch_image_metadata(
                 "image_width": width,
                 "image_height": height,
                 "horizontal_fov": horizontal_fov,
+                "lat": feature["geometry"]["coordinates"][1],
+                "lon": feature["geometry"]["coordinates"][0],
                 "vertical_fov": vertical_fov,
                 "image_url": f"https://www.mapillary.com/app/?pKey={image_id}",
             }

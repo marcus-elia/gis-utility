@@ -42,6 +42,12 @@ def main():
         help="Name to identify building that will be used as filename prefix",
     )
     parser.add_argument(
+        "--target-building-geojson-filepath",
+        type=str,
+        required=False,
+        help="Path to GeoJSON file containing only the footprint of the building.",
+    )
+    parser.add_argument(
         "-o", "--output-dir", type=str, required=True, help="Output directory"
     )
     args = parser.parse_args()
@@ -78,6 +84,8 @@ def main():
             args.building_name,
             "-o",
             building_dir,
+            "--target-building-geojson-filepath",
+            args.target_building_geojson_filepath,
         ]
     )
     p.communicate()
